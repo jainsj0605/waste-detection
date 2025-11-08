@@ -5,29 +5,45 @@ import cv2
 import settings
 import threading
 
+# ---------------------------------------------------------------------
+# Clears sidebar placeholders after 3 seconds
+# ---------------------------------------------------------------------
 def sleep_and_clear_success():
     time.sleep(3)
     st.session_state['recyclable_placeholder'].empty()
     st.session_state['non_recyclable_placeholder'].empty()
     st.session_state['hazardous_placeholder'].empty()
 
+# ---------------------------------------------------------------------
+# Load YOLO model
+# ---------------------------------------------------------------------
 def load_model(model_path):
     model = YOLO(model_path)
     return model
 
+# ---------------------------------------------------------------------
+# Classify detected items into waste categories
+# ---------------------------------------------------------------------
 def classify_waste_type(detected_items):
     recyclable_items = set(detected_items) & set(settings.RECYCLABLE)
     non_recyclable_items = set(detected_items) & set(settings.NON_RECYCLABLE)
     hazardous_items = set(detected_items) & set(settings.HAZARDOUS)
-    
     return recyclable_items, non_recyclable_items, hazardous_items
 
+# ---------------------------------------------------------------------
+# Clean up class name formatting
+# ---------------------------------------------------------------------
 def remove_dash_from_class_name(class_name):
     return class_name.replace("_", " ")
 
+# ---------------------------------------------------------------------
+# Core display function: draws boxes, updates sidebar, shows frame
+# ---------------------------------------------------------------------
 def _display_detected_frames(model, st_frame, image):
-    image = cv2.resize(image, (640, int(640*(9/16))))
-    
+    # Resize for consistent display ratio (16:9)
+    image = cv2.resize(image, (640, int(640 * (9 / 16))))
+
+    # Initialize Streamlit session state variables if not present
     if 'unique_classes' not in st.session_state:
         st.session_state['unique_classes'] = set()
 
@@ -41,10 +57,12 @@ def _display_detected_frames(model, st_frame, image):
     if 'last_detection_time' not in st.session_state:
         st.session_state['last_detection_time'] = 0
 
+    # Run YOLO prediction
     res = model.predict(image, conf=0.6)
     names = model.names
     detected_items = set()
 
+    # Update sidebar text when new classes appear
     for result in res:
         new_classes = set([names[int(c)] for c in result.boxes.cls])
         if new_classes != st.session_state['unique_classes']:
@@ -78,22 +96,31 @@ def _display_detected_frames(model, st_frame, image):
             threading.Thread(target=sleep_and_clear_success).start()
             st.session_state['last_detection_time'] = time.time()
 
+    # -----------------------------------------------------------------
+    # ✅ FIXED COLOR ISSUE HERE
+    # YOLOv8 .plot() returns a BGR image — convert to RGB before display
+    # -----------------------------------------------------------------
     res_plotted = res[0].plot()
-    st_frame.image(res_plotted, channels="BGR")
+    res_plotted_rgb = cv2.cvtColor(res_plotted, cv2.COLOR_BGR2RGB)
+    st_frame.image(res_plotted_rgb, channels="RGB", use_column_width=True)
 
-
+# ---------------------------------------------------------------------
+# Webcam loop — captures frames and calls display function
+# ---------------------------------------------------------------------
 def play_webcam(model):
     source_webcam = settings.WEBCAM_PATH
     if st.button('Detect Objects'):
         try:
             vid_cap = cv2.VideoCapture(source_webcam)
             st_frame = st.empty()
-            while (vid_cap.isOpened()):
+
+            while vid_cap.isOpened():
                 success, image = vid_cap.read()
-                if success:
-                    _display_detected_frames(model,st_frame,image)
-                else:
+                if not success:
                     vid_cap.release()
                     break
+
+                _display_detected_frames(model, st_frame, image)
+
         except Exception as e:
             st.sidebar.error("Error loading video: " + str(e))
